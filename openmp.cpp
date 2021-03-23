@@ -17,6 +17,17 @@
 #include "common.h"
 #include "omp.h"
 
+#include <iostream>
+#include <vector>
+
+using namespace std;
+
+//
+//  tuned constants
+//
+#define density 0.0005
+#define cutoff  0.01
+
 //
 //  benchmarking program
 //
@@ -48,6 +59,34 @@ int main( int argc, char **argv )
     init_particles( n, particles );
 
     //
+    // Initialize grid and bins
+    //
+    double size = sqrt(n * density);
+    double bin_size = cutoff;
+    int num_bins = ceil(size / bin_size);
+
+    vector<particle_t*> grid[num_bins][num_bins];
+
+    //
+    // put particles in the bins where they belong
+    //
+    for (int p = 0; p < n; p ++) {
+        int row = particles[p].x / bin_size;
+        int col = particles[p].y / bin_size;
+        grid[row][col].push_back(&particles[p]);
+    }
+
+    //
+    // locks for each bin
+    //
+    omp_lock_t locks[num_bins][num_bins] ;
+    for(int r = 0; r < num_bins; r ++){
+        for(int c = 0; c < num_bins; c ++){
+            omp_init_lock(&locks[r][c]);
+        }
+    }
+
+    //
     //  simulate a number of time steps
     //
     double simulation_time = read_timer( );
@@ -64,11 +103,20 @@ int main( int argc, char **argv )
         //  compute all forces
         //
         #pragma omp for reduction (+:navg) reduction(+:davg)
-        for( int i = 0; i < n; i++ )
-        {
-            particles[i].ax = particles[i].ay = 0;
-            for (int j = 0; j < n; j++ )
-                apply_force( particles[i], particles[j],&dmin,&davg,&navg);
+        for(int r = 0; r < num_bins; r ++) {
+            for (int c = 0; c < num_bins; c ++) {
+                for (int p = 0; p < grid[r][c].size(); p ++) { // for each particle in each bin
+                    grid[r][c][p]->ax = 0;
+                    grid[r][c][p]->ay = 0;
+                    for (int new_r = max(0, r - 1); new_r <= min(r + 1, num_bins - 1); new_r ++) {
+                        for (int new_c = max(0, c - 1); new_c <= min(c + 1, num_bins - 1); new_c ++) {
+                            for (int new_p = 0; new_p < grid[new_r][new_c].size(); new_p ++) {
+                                apply_force(*grid[r][c][p], *grid[new_r][new_c][new_p], &dmin, &davg, &navg);
+                            }
+                        }
+                    }
+                }
+            }
         }
         
 		
@@ -78,6 +126,31 @@ int main( int argc, char **argv )
         #pragma omp for
         for( int i = 0; i < n; i++ ) 
             move( particles[i] );
+
+        //
+        // update bins
+        //
+        #pragma omp for
+        for (int r = 0; r < num_bins; r ++) {
+            for (int c = 0; c < num_bins; c ++) {
+                // for each particle in the bin
+                for (int p = 0; p < grid[r][c].size(); p ++) {
+                    omp_set_lock(&locks[r][c]);
+                    int new_r = grid[r][c][p]->x / bin_size;
+                    int new_c = grid[r][c][p]->y / bin_size;
+                    if (r != new_r || c != new_c) {
+                        grid[r][c].erase(grid[r][c].begin() + p);
+                    }
+                    omp_unset_lock(&locks[r][c]);
+
+                    if (r != new_r || c != new_c) {
+                        omp_set_lock(&locks[new_r][new_c]);
+                        grid[new_r][new_c].push_back(grid[r][c][p]);
+                        omp_unset_lock(&locks[new_r][new_c]);
+                    }
+                }
+            }
+        }
   
         if( find_option( argc, argv, "-no" ) == -1 ) 
         {

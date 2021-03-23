@@ -18,9 +18,6 @@
 
 #include <iostream>
 #include <vector>
-#include <algorithm>
-#include <unistd.h>
-
 
 using namespace std;
 
@@ -34,7 +31,7 @@ using namespace std;
 //  benchmarking program
 //
 int main( int argc, char **argv )
-{
+{    
     int navg,nabsavg=0;
     double davg,dmin, absmin=1.0, absavg=0.0;
 
@@ -48,12 +45,12 @@ int main( int argc, char **argv )
         printf( "-no turns off all correctness checks and particle output\n");
         return 0;
     }
-
+    
     int n = read_int( argc, argv, "-n", 1000 );
 
     char *savename = read_string( argc, argv, "-o", NULL );
     char *sumname = read_string( argc, argv, "-s", NULL );
-
+    
     FILE *fsave = savename ? fopen( savename, "w" ) : NULL;
     FILE *fsum = sumname ? fopen ( sumname, "a" ) : NULL;
 
@@ -65,126 +62,127 @@ int main( int argc, char **argv )
     // Initialize grid and bins
     //
     double size = sqrt(n * density);
-    double bin_size = cutoff;
+    double bin_size = 2 * cutoff;
     int num_bins = ceil(size / bin_size);
 
-    vector<int> grid[num_bins][num_bins];
+    vector<particle_t*> grid[num_bins][num_bins];
 
     //
-    // put particles in the bins they belong
+    // put particles in the bins where they belong
     //
     for (int p = 0; p < n; p ++) {
         int row = particles[p].x / bin_size;
         int col = particles[p].y / bin_size;
-        grid[row][col].push_back(p);
+        grid[row][col].push_back(&particles[p]);
     }
 
-
+    
     //
     //  simulate a number of time steps
     //
     double simulation_time = read_timer( );
-
+	
     for( int step = 0; step < NSTEPS; step++ )
     {
-        navg = 0;
+	navg = 0;
         davg = 0.0;
-        dmin = 1.0;
+	dmin = 1.0;
         //
         //  compute forces
         //
-        for (int p = 0; p < n; p ++) {
-            particles[p].ax = particles[p].ay = 0; // init acceleration
-            // find where the particle is
-            int row = particles[p].x / bin_size;
-            int col = particles[p].y / bin_size;
-
-            for (int r = max(0, row - 1); r <= min(row + 1, num_bins - 1); r ++) {
-                for (int c = max(0, col - 1); c <= min(col + 1, num_bins - 1); c ++) {
-                    for (int i = 0; i < grid[r][c].size(); i ++) {
-                        int p_i = grid[r][c][i];
-                        apply_force(particles[p], particles[p_i], &dmin, &davg, &navg);
+        for(int r = 0; r < num_bins; r ++) {
+            for (int c = 0; c < num_bins; c ++) {
+                for (int p = 0; p < grid[r][c].size(); p ++) { // for each particle in each bin
+                    grid[r][c][p]->ax = 0;
+                    grid[r][c][p]->ay = 0;
+                    for (int new_r = max(0, r - 1); new_r <= min(r + 1, num_bins - 1); new_r ++) {
+                        for (int new_c = max(0, c - 1); new_c <= min(c + 1, num_bins - 1); new_c ++) {
+                            for (int new_p = 0; new_p < grid[new_r][new_c].size(); new_p ++) {
+                                apply_force(*grid[r][c][p], *grid[new_r][new_c][new_p], &dmin, &davg, &navg);
+                            }
+                        }
                     }
                 }
             }
         }
-
+ 
         //
         //  move particles
         //
-        for( int i = 0; i < n; i++ )
+        for( int i = 0; i < n; i++ ) 
             move( particles[i] );
 
         //
-        // update grid / bins
+        // update bins
         //
         for (int r = 0; r < num_bins; r ++) {
             for (int c = 0; c < num_bins; c ++) {
                 // for each particle in the bin
-                for (int i = 0; i < grid[r][c].size(); i ++) {
-                    int p_idx = grid[r][c][i];
-                    int new_r = particles[p_idx].x / bin_size;
-                    int new_c = particles[p_idx].y / bin_size;
+                for (int p = 0; p < grid[r][c].size(); p ++) {
+                    int new_r = grid[r][c][p]->x / bin_size;
+                    int new_c = grid[r][c][p]->y / bin_size;
                     if (r != new_r || c != new_c) {
-                        grid[new_r][new_c].push_back(p_idx);
-                        grid[r][c].erase(grid[r][c].begin() + i);
+                        grid[new_r][new_c].push_back(grid[r][c][p]);
+                        grid[r][c].erase(grid[r][c].begin() + p);
                     }
                 }
             }
-        }
+        }		
 
         if( find_option( argc, argv, "-no" ) == -1 )
         {
-            //
-            // Computing statistical data
-            //
-            if (navg) {
-                absavg +=  davg/navg;
-                nabsavg++;
-            }
-            if (dmin < absmin) absmin = dmin;
-
-            //
-            //  save if necessary
-            //
-            if( fsave && (step%SAVEFREQ) == 0 )
-                save( fsave, n, particles );
+          //
+          // Computing statistical data
+          //
+          if (navg) {
+            absavg +=  davg/navg;
+            nabsavg++;
+          }
+          if (dmin < absmin) absmin = dmin;
+		
+          //
+          //  save if necessary
+          //
+          if( fsave && (step%SAVEFREQ) == 0 )
+              save( fsave, n, particles );
         }
     }
     simulation_time = read_timer( ) - simulation_time;
-
+    
     printf( "n = %d, simulation time = %g seconds", n, simulation_time);
 
     if( find_option( argc, argv, "-no" ) == -1 )
     {
-        if (nabsavg) absavg /= nabsavg;
-        //
-        //  -the minimum distance absmin between 2 particles during the run of the simulation
-        //  -A Correct simulation will have particles stay at greater than 0.4 (of cutoff) with typical values between .7-.8
-        //  -A simulation were particles don't interact correctly will be less than 0.4 (of cutoff) with typical values between .01-.05
-        //
-        //  -The average distance absavg is ~.95 when most particles are interacting correctly and ~.66 when no particles are interacting
-        //
-        printf( ", absmin = %lf, absavg = %lf", absmin, absavg);
-        if (absmin < 0.4) printf ("\nThe minimum distance is below 0.4 meaning that some particle is not interacting");
-        if (absavg < 0.8) printf ("\nThe average distance is below 0.8 meaning that most particles are not interacting");
+      if (nabsavg) absavg /= nabsavg;
+    // 
+    //  -the minimum distance absmin between 2 particles during the run of the simulation
+    //  -A Correct simulation will have particles stay at greater than 0.4 (of cutoff) with typical values between .7-.8
+    //  -A simulation were particles don't interact correctly will be less than 0.4 (of cutoff) with typical values between .01-.05
+    //
+    //  -The average distance absavg is ~.95 when most particles are interacting correctly and ~.66 when no particles are interacting
+    //
+    printf( ", absmin = %lf, absavg = %lf", absmin, absavg);
+    if (absmin < 0.4) printf ("\nThe minimum distance is below 0.4 meaning that some particle is not interacting");
+    if (absavg < 0.8) printf ("\nThe average distance is below 0.8 meaning that most particles are not interacting");
     }
-    printf("\n");
+    printf("\n");     
 
     //
     // Printing summary data
     //
-    if( fsum)
+    if( fsum) 
         fprintf(fsum,"%d %g\n",n,simulation_time);
-
+ 
     //
     // Clearing space
     //
     if( fsum )
-        fclose( fsum );
+        fclose( fsum );    
     free( particles );
     if( fsave )
         fclose( fsave );
-
+    
     return 0;
 }
+
+
