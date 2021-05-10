@@ -77,7 +77,7 @@ int main( int argc, char **argv )
     }
 
     //
-    // locks for each bin
+    // initialize locks for each bin
     //
     omp_lock_t locks[num_bins][num_bins] ;
     for(int r = 0; r < num_bins; r ++){
@@ -131,6 +131,7 @@ int main( int argc, char **argv )
         // update bins
         //
         #pragma omp for
+        // for each bin
         for (int r = 0; r < num_bins; r ++) {
             for (int c = 0; c < num_bins; c ++) {
                 // for each particle in the bin
@@ -138,11 +139,12 @@ int main( int argc, char **argv )
                     omp_set_lock(&locks[r][c]);
                     int new_r = grid[r][c][p]->x / bin_size;
                     int new_c = grid[r][c][p]->y / bin_size;
+                    // move the particle to a new bin if necessary
                     if (r != new_r || c != new_c) {
                         grid[r][c].erase(grid[r][c].begin() + p);
                     }
                     omp_unset_lock(&locks[r][c]);
-
+                    
                     if (r != new_r || c != new_c) {
                         omp_set_lock(&locks[new_r][new_c]);
                         grid[new_r][new_c].push_back(grid[r][c][p]);

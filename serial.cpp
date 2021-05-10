@@ -115,12 +115,14 @@ int main( int argc, char **argv )
         //
         // update bins
         //
+        // for each bin
         for (int r = 0; r < num_bins; r ++) {
             for (int c = 0; c < num_bins; c ++) {
                 // for each particle in the bin
                 for (int p = 0; p < grid[r][c].size(); p ++) {
                     int new_r = grid[r][c][p]->x / bin_size;
                     int new_c = grid[r][c][p]->y / bin_size;
+                    // move the particle to a new bin if necessary
                     if (r != new_r || c != new_c) {
                         grid[new_r][new_c].push_back(grid[r][c][p]);
                         grid[r][c].erase(grid[r][c].begin() + p);
